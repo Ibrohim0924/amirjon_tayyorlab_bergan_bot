@@ -6,37 +6,27 @@ const path = require('path');
 // Konfiguratsiya
 const TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const REQUIRED_CHANNEL = process.env.REQUIRED_CHANNEL || "SaRa_KiNoLaR_Uzz";
-console.log(REQUIRED_CHANNEL)
 const ADMIN_ID = process.env.ADMIN_ID || "123456789";
-const PORT = process.env.PORT || 3000;
-const WEBHOOK_URL = process.env.WEBHOOK_URL;
 
 if (!TOKEN) {
   console.error("❌ Bot tokeni topilmadi! .env faylida TELEGRAM_BOT_TOKEN ni ko'rsating");
   process.exit(1);
 }
 
-// Botni yaratish
-let bot;
-if (WEBHOOK_URL) {
-  bot = new TelegramBot(TOKEN);
-  bot.setWebHook(`${WEBHOOK_URL}/bot${TOKEN}`);
-  console.log("🤖 Bot webhook rejimida ishga tushdi...");
-} else {
-  bot = new TelegramBot(TOKEN, {
-    polling: {
-      interval: 300,
-      autoStart: true,
-      params: {
-        timeout: 10
-      }
+// Botni yaratish (faqat polling rejimida)
+const bot = new TelegramBot(TOKEN, {
+  polling: {
+    interval: 300,
+    autoStart: true,
+    params: {
+      timeout: 10
     }
-  });
-  console.log("🤖 Bot polling rejimida ishga tushdi...");
-}
+  }
+});
+console.log("🤖 Bot polling rejimida ishga tushdi...");
 
 // Adminga xabar yuborish
-bot.sendMessage(ADMIN_ID, "✅ Bot ishga tushdi, brat!");
+bot.sendMessage(ADMIN_ID, "✅ Bot ishga tushdi!");
 
 // Fayl yo'llari
 const DATA_DIR = path.join(__dirname, 'data');
@@ -75,24 +65,21 @@ function saveData(filename, data) {
   }
 }
 
-// Bir martalik kod generatori
-function generateUniqueCode() {
+// Kino ID generatori (1 dan boshlab)
+function generateMovieId() {
   const movies = loadData(MOVIES_FILE);
-  const codes = Object.keys(movies).map(Number).filter(n => !isNaN(n));
-  return String(codes.length > 0 ? Math.max(...codes) + 1 : 1).padStart(4, '0');
+  const ids = Object.keys(movies).map(Number).filter(n => !isNaN(n));
+  return ids.length > 0 ? Math.max(...ids) + 1 : 1;
 }
 
-// Komandalar ro'yxati
-const commands = [
+// Komandalar menyusini o'rnatish
+bot.setMyCommands([
   { command: '/start', description: 'Botni ishga tushirish' },
-  { command: '/help', description: 'Yordam olish' },
-  { command: '/search', description: 'Kino qidirish' },
-  { command: '/addmovie', description: 'Yangi kino qo\'shish (admin)' },
-  { command: '/stats', description: 'Bot statistikasi (admin)' },
-  { command: '/reklama', description: 'Reklama yuborish (admin)' }
-];
-
-bot.setMyCommands(commands);
+  { command: '/addmovie', description: 'Kino qo\'shish (faqat admin)' },
+  { command: '/stats', description: 'Statistikani ko\'rish (admin)' },
+  { command: '/reklama', description: 'Reklama yuborish (admin)' },
+  { command: '/help', description: 'Yordam haqida ma\'lumot' }
+]);
 
 // Foydalanuvchilarni kuzatish
 function trackUser(chatId, userInfo) {
@@ -205,41 +192,90 @@ bot.onText(/🎥 Kino izlash|\/search/, (msg) => {
     return bot.sendMessage(chatId, "❌ Botdan foydalanish uchun kanalga obuna bo'lishingiz kerak!");
   }
   
-  bot.sendMessage(chatId, "🔍 Kino kodini kiriting (masalan: 0001):", {
+  bot.sendMessage(chatId, "🔍 Kino nomini kiriting (to'liq yoki qismini):", {
     reply_markup: {
       force_reply: true
     }
   });
 });
 
-// Kino kodiga javob
-bot.onText(/^[0-9]{4}$/, async (msg) => {
+// Kino qidirish
+bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
-  const code = msg.text;
-  const users = loadData(USERS_FILE);
+  const text = msg.text;
   
-  if (!users[chatId]?.isSubscribed) {
-    return bot.sendMessage(chatId, "❌ Botdan foydalanish uchun kanalga obuna bo'lishingiz kerak!");
+  // Agar bu reply emas yoki admin rejimida bo'lsa, o'tkazib yuboramiz
+  if (!msg.reply_to_message || !msg.reply_to_message.text.includes("Kino nomini kiriting")) {
+    return;
   }
   
-  const movies = loadData(MOVIES_FILE);
-  const movie = movies[code];
+  const users = loadData(USERS_FILE);
+  if (!users[chatId]?.isSubscribed) return;
   
-  if (movie?.file_id) {
-    // Statistikani yangilash
+  const movies = loadData(MOVIES_FILE);
+  const searchTerm = text.toLowerCase().trim();
+  
+  // Kino nomi bo'yicha qidirish
+  const foundMovies = Object.entries(movies)
+    .filter(([id, movie]) => movie.title.toLowerCase().includes(searchTerm))
+    .slice(0, 10); // Faqat birinchi 10 tasini ko'rsatamiz
+  
+  if (foundMovies.length === 0) {
+    return bot.sendMessage(chatId, "❌ Hech qanday kino topilmadi. Boshqa nom bilan qayta urinib ko'ring.");
+  }
+  
+  // Agar bitta kino topilsa, to'g'ridan-to'g'ri yuboramiz
+  if (foundMovies.length === 1) {
+    const [id, movie] = foundMovies[0];
     users[chatId].searchCount = (users[chatId].searchCount || 0) + 1;
     saveData(USERS_FILE, users);
     
     try {
       await bot.sendVideo(chatId, movie.file_id, {
-        caption: `🎥 ${movie.title}\n📹 Kodi: ${code}\n📅 Qo'shilgan sana: ${new Date(movie.added_at).toLocaleDateString()}`
+        caption: `🎥 ${movie.title}\n📅 Qo'shilgan sana: ${new Date(movie.added_at).toLocaleDateString()}`
       });
     } catch (err) {
       console.error('Video yuborishda xato:', err);
       bot.sendMessage(chatId, "❌ Video yuborishda xatolik. Iltimos, keyinroq urinib ko'ring.");
     }
-  } else {
-    bot.sendMessage(chatId, "❌ Bunday kino topilmadi. Kodni tekshirib qayta kiriting.");
+    return;
+  }
+  
+  // Ko'p kinolar topilsa, ro'yxatni chiqaramiz
+  const keyboard = foundMovies.map(([id, movie]) => {
+    return [{ text: movie.title, callback_data: `movie_${id}` }];
+  });
+  
+  bot.sendMessage(chatId, `🔍 Topilgan kinolar (${foundMovies.length} ta):`, {
+    reply_markup: {
+      inline_keyboard: keyboard
+    }
+  });
+});
+
+// Kino tanlash uchun callback
+bot.on('callback_query', async (query) => {
+  if (query.data.startsWith('movie_')) {
+    const chatId = query.message.chat.id;
+    const movieId = query.data.split('_')[1];
+    const users = loadData(USERS_FILE);
+    const movies = loadData(MOVIES_FILE);
+    const movie = movies[movieId];
+    
+    if (movie?.file_id) {
+      users[chatId].searchCount = (users[chatId].searchCount || 0) + 1;
+      saveData(USERS_FILE, users);
+      
+      try {
+        await bot.sendVideo(chatId, movie.file_id, {
+          caption: `🎥 ${movie.title}\n📅 Qo'shilgan sana: ${new Date(movie.added_at).toLocaleDateString()}`
+        });
+        await bot.deleteMessage(chatId, query.message.message_id);
+      } catch (err) {
+        console.error('Video yuborishda xato:', err);
+        bot.sendMessage(chatId, "❌ Video yuborishda xatolik. Iltimos, keyinroq urinib ko'ring.");
+      }
+    }
   }
 });
 
@@ -301,7 +337,7 @@ bot.on('video', async (msg) => {
 });
 
 // Kino nomini qabul qilish
-bot.on('text', async (msg) => {
+bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   if (String(chatId) !== String(ADMIN_ID)) return;
   
@@ -310,9 +346,9 @@ bot.on('text', async (msg) => {
     const file_id = adminStates[chatId].file_id;
     
     const movies = loadData(MOVIES_FILE);
-    const code = generateUniqueCode();
+    const id = generateMovieId();
     
-    movies[code] = {
+    movies[id] = {
       file_id: file_id,
       title: title,
       added_at: new Date().toISOString(),
@@ -320,7 +356,7 @@ bot.on('text', async (msg) => {
     };
     
     if (saveData(MOVIES_FILE, movies)) {
-      bot.sendMessage(chatId, `✅ Kino muvaffaqiyatli qo'shildi!\n\n🎥 Kodi: ${code}\n📹 Nomi: ${title}`);
+      bot.sendMessage(chatId, `✅ Kino muvaffaqiyatli qo'shildi!\n\n🎥 ID: ${id}\n📹 Nomi: ${title}`);
     } else {
       bot.sendMessage(chatId, "❌ Kino qo'shishda xatolik yuz berdi!");
     }
@@ -453,33 +489,32 @@ bot.on('message', async (msg) => {
 });
 
 // Yordam
-// Yordam
 bot.onText(/\/help|ℹ️ Yordam/, (msg) => {
-    const chatId = msg.chat.id;
-    const helpText = `
-  🎬 <b>Kino Bot Yordam</b>
+  const chatId = msg.chat.id;
+  const helpText = `
+🎬 <b>Kino Bot Yordam</b>
+
+Bu bot orqali siz turli kinolarni nomi bo'yicha qidirib topishingiz mumkin.
+
+🔍 <b>Kino qidirish</b>:
+1. "🎥 Kino izlash" tugmasini bosing
+2. Kino nomini kiriting (to'liq yoki qismini)
+
+📢 <b>Eslatma</b>: Botdan foydalanish uchun kanalimizga obuna bo'lishingiz kerak.
+
+👨‍💻 <b>Admin komandalari</b>:
+- /addmovie - Yangi kino qo'shish
+- /stats - Bot statistikasi
+- /reklama - Reklama yuborish
+
+Savollar bo'lsa <a href="https://t.me/ibrohimjon_0924">@ibrohimjon_0924</a> ga murojaat qiling.
+  `;
   
-  Bu bot orqali siz turli kinolarni kod orqali topib ko'rishingiz mumkin.
-  
-  🔍 <b>Kino qidirish</b>:
-  1. "🎥 Kino izlash" tugmasini bosing
-  2. 4 xonali kodni kiriting (masalan: 0001)
-  
-  📢 <b>Eslatma</b>: Botdan foydalanish uchun kanalimizga obuna bo'lishingiz kerak.
-  
-  👨‍💻 <b>Admin komandalari</b>:
-  - /addmovie - Yangi kino qo'shish
-  - /stats - Bot statistikasi
-  - /reklama - Reklama yuborish
-  
-  Savollar bo'lsa <a href="https://t.me/Amirjon_Karimov">@Amirjon_Karimov</a> ga murojaat qiling.
-    `;
-    
-    bot.sendMessage(chatId, helpText, { 
-      parse_mode: 'HTML',
-      disable_web_page_preview: true
-    });
+  bot.sendMessage(chatId, helpText, { 
+    parse_mode: 'HTML',
+    disable_web_page_preview: true
   });
+});
 
 // Xatoliklar uchun
 bot.on('polling_error', (error) => {
@@ -487,10 +522,7 @@ bot.on('polling_error', (error) => {
   bot.sendMessage(ADMIN_ID, `⚠️ Botda polling xato: ${error.message}`);
 });
 
-bot.on('webhook_error', (error) => {
-  console.error(`Webhook xato: ${error.code} - ${error.message}`);
-  bot.sendMessage(ADMIN_ID, `⚠️ Botda webhook xato: ${error.message}`);
-});
+bot.deleteWebHook();
 
 // Server ishga tushganda
 console.log("✅ Bot muvaffaqiyatli ishga tushdi!");

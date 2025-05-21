@@ -247,19 +247,19 @@ bot.onText(/🎥 Kino izlash|\/search/, (msg) => {
     return bot.sendMessage(chatId, "❌ Botdan foydalanish uchun kanalga obuna bo'lishingiz kerak!");
   }
   
-  bot.sendMessage(chatId, "🔍 Kino nomini kiriting (to'liq yoki qismini):", {
+  bot.sendMessage(chatId, "🔍 Kino nomini yoki ID sini kiriting (to'liq yoki qismini):", {
     reply_markup: {
       force_reply: true
     }
   });
 });
 
-// Kino qidirish
+// Kino qidirish (O'ZGARTIRILGAN QISM)
 bot.on('message', async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text;
   
-  if (!msg.reply_to_message || !msg.reply_to_message.text.includes("Kino nomini kiriting")) {
+  if (!msg.reply_to_message || !msg.reply_to_message.text.includes("Kino nomini yoki ID sini kiriting")) {
     return;
   }
   
@@ -268,7 +268,26 @@ bot.on('message', async (msg) => {
   
   const movies = loadData(MOVIES_FILE);
   const searchTerm = text.toLowerCase().trim();
-  
+
+  // ID bo'yicha qidirish
+  if (/^\d+$/.test(searchTerm)) { // Agar kiritilgan qiymat faqat raqamlardan iborat bo'lsa
+    const movieId = searchTerm;
+    if (movies[movieId]) {
+      users[chatId].searchCount = (users[chatId].searchCount || 0) + 1;
+      saveData(USERS_FILE, users);
+      
+      const result = await sendMovie(chatId, movieId);
+      if (!result.success) {
+        bot.sendMessage(chatId, `❌ Video yuborishda xatolik: ${result.error}`);
+      }
+      return;
+    } else {
+      bot.sendMessage(chatId, `❌ ID ${movieId} bo'yicha kino topilmadi. Iltimos, boshqa nom yoki ID bilan qayta urinib ko'ring.`);
+      return;
+    }
+  }
+
+  // Kino nomi bo'yicha qidirish
   const foundMovies = Object.entries(movies)
     .filter(([id, movie]) => movie.title.toLowerCase().includes(searchTerm))
     .slice(0, 10);
@@ -290,7 +309,7 @@ bot.on('message', async (msg) => {
   }
   
   const keyboard = foundMovies.map(([id, movie]) => {
-    return [{ text: movie.title, callback_data: `movie_${id}` }];
+    return [{ text: `${movie.title} (ID: ${id})`, callback_data: `movie_${id}` }]; // Kino nomiga ID qo'shildi
   });
   
   bot.sendMessage(chatId, `🔍 Topilgan kinolar (${foundMovies.length} ta):`, {
@@ -522,17 +541,17 @@ bot.on('message', async (msg) => {
   });
 });
 
-// Yordam
+// Yordam (O'ZGARTIRILGAN QISM)
 bot.onText(/\/help|ℹ️ Yordam/, (msg) => {
   const chatId = msg.chat.id;
   const helpText = `
 🎬 <b>Kino Bot Yordam</b>
 
-Bu bot orqali siz turli kinolarni nomi bo'yicha qidirib topishingiz mumkin.
+Bu bot orqali siz turli kinolarni nomi yoki ID si bo'yicha qidirib topishingiz mumkin.
 
 🔍 <b>Kino qidirish</b>:
 1. "🎥 Kino izlash" tugmasini bosing
-2. Kino nomini kiriting (to'liq yoki qismini)
+2. Kino nomini yoki ID sini kiriting (to'liq yoki qismini)
 
 📢 <b>Eslatma</b>: Botdan foydalanish uchun kanalimizga obuna bo'lishingiz kerak.
 

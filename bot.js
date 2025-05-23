@@ -29,6 +29,7 @@ console.log("🤖 Bot polling rejimida ishga tushdi...");
 const DATA_DIR = path.join(__dirname, 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const MOVIES_FILE = path.join(DATA_DIR, 'movies.json');
+const VIEWS_FILE = path.join(DATA_DIR, 'views.json');
 
 // Ma'lumotlar bazasini ishlash
 function initDataDirectory() {
@@ -84,11 +85,21 @@ function saveVideoInfo(fileId, fileInfo, title = "") {
     file_size: fileInfo.file_size,
     title: title,
     added_at: new Date().toISOString(),
-    added_by: ADMIN_ID
+    added_by: ADMIN_ID,
+    views: 0 // Yangi kino uchun ko'rishlar soni 0
   };
   
   saveData(MOVIES_FILE, movies);
   return id;
+}
+
+// Kino ko'rishlar sonini yangilash
+function incrementMovieViews(movieId) {
+  const movies = loadData(MOVIES_FILE);
+  if (movies[movieId]) {
+    movies[movieId].views = (movies[movieId].views || 0) + 1;
+    saveData(MOVIES_FILE, movies);
+  }
 }
 
 // Video yuborish funksiyasi
@@ -102,8 +113,12 @@ async function sendMovie(chatId, movieId) {
 
   try {
     await bot.sendVideo(chatId, movie.file_id, {
-      caption: `🎥 ${movie.title || "Nomsiz kino"}\n📅 Qo'shilgan sana: ${new Date(movie.added_at).toLocaleDateString()}`
+      caption: `🎥 ${movie.title || "Nomsiz kino"}\n👁 Ko'rishlar: ${movie.views || 0}\n📅 Qo'shilgan sana: ${new Date(movie.added_at).toLocaleDateString()}`
     });
+    
+    // Ko'rishlar sonini yangilash
+    incrementMovieViews(movieId);
+    
     return { success: true };
   } catch (err) {
     console.error('Video yuborishda xato:', err);
@@ -120,7 +135,8 @@ function trackUser(chatId, userInfo) {
       joinedAt: new Date().toISOString(),
       lastActive: new Date().toISOString(),
       isSubscribed: false,
-      searchCount: 0
+      searchCount: 0,
+      viewedMovies: [] // Ko'rilgan kinolar ro'yxati
     };
     saveData(USERS_FILE, users);
   } else {
@@ -128,6 +144,21 @@ function trackUser(chatId, userInfo) {
     saveData(USERS_FILE, users);
   }
   return users[chatId];
+}
+
+// Foydalanuvchi ko'rgan kinoni qo'shish
+function addUserViewedMovie(chatId, movieId) {
+  const users = loadData(USERS_FILE);
+  if (users[chatId]) {
+    if (!users[chatId].viewedMovies) {
+      users[chatId].viewedMovies = [];
+    }
+    
+    if (!users[chatId].viewedMovies.includes(movieId)) {
+      users[chatId].viewedMovies.push(movieId);
+      saveData(USERS_FILE, users);
+    }
+  }
 }
 
 // Kanalga obuna tekshirish
@@ -275,6 +306,9 @@ bot.on('callback_query', async (query) => {
     users[chatId].searchCount = (users[chatId].searchCount || 0) + 1;
     saveData(USERS_FILE, users);
     
+    // Foydalanuvchi ko'rgan kinolar ro'yxatiga qo'shish
+    addUserViewedMovie(chatId, movieId);
+    
     const result = await sendMovie(chatId, movieId);
     if (result.success) {
       await bot.deleteMessage(chatId, query.message.message_id);
@@ -351,6 +385,9 @@ bot.on('message', async (msg) => {
       users[chatId].searchCount = (users[chatId].searchCount || 0) + 1;
       saveData(USERS_FILE, users);
       
+      // Foydalanuvchi ko'rgan kinolar ro'yxatiga qo'shish
+      addUserViewedMovie(chatId, movieId);
+      
       const result = await sendMovie(chatId, movieId);
       if (!result.success) {
         bot.sendMessage(chatId, `❌ Video yuborishda xatolik: ${result.error}`);
@@ -376,6 +413,9 @@ bot.on('message', async (msg) => {
     users[chatId].searchCount = (users[chatId].searchCount || 0) + 1;
     saveData(USERS_FILE, users);
     
+    // Foydalanuvchi ko'rgan kinolar ro'yxatiga qo'shish
+    addUserViewedMovie(chatId, id);
+    
     const result = await sendMovie(chatId, id);
     if (!result.success) {
       bot.sendMessage(chatId, `❌ Video yuborishda xatolik: ${result.error}`);
@@ -384,7 +424,10 @@ bot.on('message', async (msg) => {
   }
   
   const keyboard = foundMovies.map(([id, movie]) => {
-    return [{ text: `${movie.title} (ID: ${id})`, callback_data: `movie_${id}` }];
+    return [{ 
+      text: `${movie.title} (👁 ${movie.views || 0})`, 
+      callback_data: `movie_${id}` 
+    }];
   });
   
   bot.sendMessage(chatId, `🔍 Topilgan kinolar (${foundMovies.length} ta):`, {
@@ -406,6 +449,7 @@ bot.onText(/📊 Mening statistikam|\/mystats/, (msg) => {
 📊 Sizning statistikangiz:
 
 🔍 Qidiruvlar soni: ${user.searchCount || 0}
+🎥 Ko'rgan kinolar soni: ${user.viewedMovies?.length || 0}
 📅 Ro'yxatdan o'tgan sana: ${new Date(user.joinedAt).toLocaleDateString()}
 🕒 So'ngi faollik: ${new Date(user.lastActive).toLocaleString()}
   `;
@@ -522,6 +566,7 @@ bot.on('message', async (msg) => {
     
     // Kino ma'lumotlarini olish
     const movieTitle = movies[movieId].title || "Nomsiz kino";
+    const movieViews = movies[movieId].views || 0;
     
     // Tasdiqlash tugmasi
     const confirmKeyboard = {
@@ -533,7 +578,7 @@ bot.on('message', async (msg) => {
       }
     };
     
-    bot.sendMessage(chatId, `⚠️ Rostan ham "${movieTitle}" (ID: ${movieId}) kinosini o'chirmoqchimisiz?`, confirmKeyboard);
+    bot.sendMessage(chatId, `⚠️ Rostan ham "${movieTitle}" (ID: ${movieId}, 👁 ${movieViews}) kinosini o'chirmoqchimisiz?`, confirmKeyboard);
     delete adminStates[chatId];
   }
 });
@@ -547,10 +592,20 @@ bot.onText(/\/stats|📊 Bot statistikasi/, (msg) => {
   const movies = loadData(MOVIES_FILE);
   
   const activeUsers = Object.values(users).filter(u => u.isSubscribed);
+  const totalViews = Object.values(movies).reduce((sum, movie) => sum + (movie.views || 0), 0);
+  
+  // Eng ko'p ko'rilgan 5 ta kino
+  const topMovies = Object.entries(movies)
+    .sort((a, b) => (b[1].views || 0) - (a[1].views || 0))
+    .slice(0, 5)
+    .map(([id, movie], i) => `${i+1}. ${movie.title} (👁 ${movie.views || 0})`)
+    .join('\n');
+  
+  // Eng faol 5 ta foydalanuvchi
   const topUsers = [...activeUsers]
     .sort((a, b) => (b.searchCount || 0) - (a.searchCount || 0))
     .slice(0, 5)
-    .map((u, i) => `${i+1}. ${u.firstName} (${u.searchCount || 0} qidiruv)`)
+    .map((u, i) => `${i+1}. ${u.firstName} (${u.searchCount || 0} qidiruv, ${u.viewedMovies?.length || 0} kino)`)
     .join('\n');
   
   const stats = `
@@ -559,8 +614,12 @@ bot.onText(/\/stats|📊 Bot statistikasi/, (msg) => {
 👥 Jami foydalanuvchilar: ${Object.keys(users).length}
 ✅ Faol obunachilar: ${activeUsers.length}
 🎥 Kinolar soni: ${Object.keys(movies).length}
+👁 Jami ko'rishlar: ${totalViews}
 
-🔝 Top 5 foydalanuvchilar:
+🏆 Eng ko'p ko'rilgan kinolar:
+${topMovies}
+
+🏆 Eng faol foydalanuvchilar:
 ${topUsers}
 
 🔄 Oxirgi yangilanish: ${new Date().toLocaleString()}
@@ -681,7 +740,7 @@ Bu bot orqali siz turli kinolarni nomi yoki ID si bo'yicha qidirib topishingiz m
 - /stats - Bot statistikasi
 - /reklama - Reklama yuborish
 
-Savollar bo'lsa @admin ga murojaat qiling.
+Savollar bo'lsa @ibrohimjon_0924 ga murojaat qiling.
   `;
   
   bot.sendMessage(chatId, helpText, { 

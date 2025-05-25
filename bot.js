@@ -186,6 +186,7 @@ function showMainMenu(chatId) {
   
   if (isAdmin) {
     keyboard.push(["👨‍💻 Admin panel"]);
+    keyboard.push(["🎬 Mening kinolarim"]);
   }
   
   const options = {
@@ -229,7 +230,8 @@ if (ADMIN_ID) {
     { command: '/addseries', description: 'Qismli serial qo\'shish' },
     { command: '/deletemovie', description: 'Kino o\'chirish' },
     { command: '/stats', description: 'Statistikani ko\'rish' },
-    { command: '/reklama', description: 'Reklama yuborish' }
+    { command: '/reklama', description: 'Reklama yuborish' },
+    { command: '/mymovies', description: 'Mening kinolarim/seriallarimni ko\'rish' }
   ], { scope: { type: 'chat', chat_id: ADMIN_ID } });
 }
 
@@ -254,7 +256,7 @@ bot.onText(/\/start/, async (msg) => {
           }],
           [{
             text: "✅ Obuna bo'ldim",
-            callback_data: 'check_subscription'
+ kindness_data: 'check_subscription'
           }]
         ]
       }
@@ -279,6 +281,59 @@ bot.onText(/👨‍💻 Admin panel/, (msg) => {
 // Asosiy menyuga qaytish
 bot.onText(/🔙 Asosiy menyu/, (msg) => {
   showMainMenu(msg.chat.id);
+});
+
+// Mening kinolarim
+bot.onText(/\/mymovies|🎬 Mening kinolarim/, (msg) => {
+  const chatId = msg.chat.id;
+  if (String(chatId) !== String(ADMIN_ID)) {
+    return bot.sendMessage(chatId, "❌ Bu funksiya faqat admin uchun mavjud!");
+  }
+
+  const movies = loadData(MOVIES_FILE);
+  const myMovies = Object.entries(movies)
+    .filter(([id, movie]) => String(movie.added_by) === String(ADMIN_ID))
+    .sort((a, b) => new Date(b[1].added_at) - new Date(a[1].added_at));
+
+  if (myMovies.length === 0) {
+    return bot.sendMessage(chatId, "❌ Siz hali hech qanday kino yoki serial qo'shmagansiz!");
+  }
+
+  const groupedBySeries = {};
+  myMovies.forEach(([id, movie]) => {
+    if (movie.isSeries) {
+      if (!groupedBySeries[movie.seriesId]) {
+        groupedBySeries[movie.seriesId] = {
+          title: movie.title.split(' - ')[0],
+          episodes: []
+        };
+      }
+      groupedBySeries[movie.seriesId].episodes.push({ id, movie });
+    } else {
+      groupedBySeries[id] = { title: movie.title, episodes: [{ id, movie }] };
+    }
+  });
+
+  const keyboard = Object.entries(groupedBySeries).map(([seriesId, series]) => {
+    if (series.episodes.length === 1 && !series.episodes[0].movie.isSeries) {
+      const movie = series.episodes[0].movie;
+      return [{
+        text: `${movie.title} (👁 ${movie.views || 0})`,
+        callback_data: `movie_${series.episodes[0].id}`
+      }];
+    } else {
+      return [{
+        text: `${series.title} (${series.episodes.length} qism)`,
+        callback_data: `series_${seriesId}`
+      }];
+    }
+  });
+
+  bot.sendMessage(chatId, `🎬 Sizning kinolar va seriallaringiz (${myMovies.length} ta):`, {
+    reply_markup: {
+      inline_keyboard: keyboard
+    }
+  });
 });
 
 // Callback query
@@ -318,6 +373,34 @@ bot.on('callback_query', async (query) => {
     } else {
       bot.sendMessage(chatId, `❌ Video yuborishda xatolik: ${result.error}`);
     }
+  }
+  
+  // Serial qismlarini ko'rsatish
+  if (query.data.startsWith('series_')) {
+    const seriesId = query.data.split('_')[1];
+    const movies = loadData(MOVIES_FILE);
+    const seriesEpisodes = Object.entries(movies)
+      .filter(([id, movie]) => movie.isSeries && movie.seriesId === seriesId)
+      .sort((a, b) => a[1].episodeNumber - b[1].episodeNumber);
+    
+    if (seriesEpisodes.length === 0) {
+      return bot.sendMessage(chatId, "❌ Serial topilmadi!");
+    }
+
+    const keyboard = seriesEpisodes.map(([id, movie]) => {
+      return [{
+        text: `${movie.title} - ${movie.episodeNumber}-qism (👁 ${movie.views || 0})`,
+        callback_data: `movie_${id}`
+      }];
+    });
+
+    bot.editMessageText(`📺 "${seriesEpisodes[0][1].title.split(' - ')[0]}" serialining qismlari:`, {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: keyboard
+      }
+    });
   }
   
   // Kino o'chirish uchun callback
@@ -391,7 +474,6 @@ bot.on('message', async (msg) => {
       addUserViewedMovie(chatId, movieId);
       
       if (movies[movieId].isSeries) {
-        // Serial bo'lsa, barcha qismlarni topish
         const seriesId = movies[movieId].seriesId;
         const seriesEpisodes = Object.entries(movies)
           .filter(([id, movie]) => movie.isSeries && movie.seriesId === seriesId)
@@ -404,13 +486,12 @@ bot.on('message', async (msg) => {
           }];
         });
         
-        bot.sendMessage(chatId, `📺 "${movies[movieId].title}" serialining qismlari:`, {
+        bot.sendMessage(chatId, `📺 "${movies[movieId].title.split(' - ')[0]}" serialining qismlari:`, {
           reply_markup: {
             inline_keyboard: keyboard
           }
         });
       } else {
-        // Oddiy kino bo'lsa
         const result = await sendMovie(chatId, movieId);
         if (!result.success) {
           bot.sendMessage(chatId, `❌ Video yuborishda xatolik: ${result.error}`);
@@ -554,7 +635,9 @@ bot.on('video', async (msg) => {
       mime_type: video.mime_type,
       file_size: video.file_size
     };
-    adminStates[chatId].step = 'waiting_title';
+   
+
+ adminStates[chatId].step = 'waiting_title';
     
     bot.sendMessage(chatId, "✅ Video qabul qilindi!\n\nEndi kino nomini yuboring:", {
       reply_markup: {
@@ -855,6 +938,7 @@ Bu bot orqali siz turli kinolar va seriallarni nomi yoki ID si bo'yicha qidirib 
 - /deletemovie - Kino/serial o'chirish
 - /stats - Bot statistikasi
 - /reklama - Reklama yuborish
+- /mymovies - Siz qo'shgan kinolar/seriallar ro'yxati
 
 Savollar bo'lsa @ibrohimjon_0924 ga murojaat qiling.
   `;

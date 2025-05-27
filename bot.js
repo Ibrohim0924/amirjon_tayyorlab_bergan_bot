@@ -29,7 +29,6 @@ console.log("🤖 Bot polling rejimida ishga tushdi...");
 const DATA_DIR = path.join(__dirname, 'data');
 const USERS_FILE = path.join(DATA_DIR, 'users.json');
 const MOVIES_FILE = path.join(DATA_DIR, 'movies.json');
-const VIEWS_FILE = path.join(DATA_DIR, 'views.json');
 
 // Ma'lumotlar bazasini ishlash
 function initDataDirectory() {
@@ -256,7 +255,7 @@ bot.onText(/\/start/, async (msg) => {
           }],
           [{
             text: "✅ Obuna bo'ldim",
- kindness_data: 'check_subscription'
+            callback_data: 'check_subscription'
           }]
         ]
       }
@@ -270,72 +269,6 @@ bot.onText(/\/start/, async (msg) => {
   }
 });
 
-// Admin panelni ochish
-bot.onText(/👨‍💻 Admin panel/, (msg) => {
-  const chatId = msg.chat.id;
-  if (String(chatId) === String(ADMIN_ID)) {
-    showAdminMenu(chatId);
-  }
-});
-
-// Asosiy menyuga qaytish
-bot.onText(/🔙 Asosiy menyu/, (msg) => {
-  showMainMenu(msg.chat.id);
-});
-
-// Mening kinolarim
-bot.onText(/\/mymovies|🎬 Mening kinolarim/, (msg) => {
-  const chatId = msg.chat.id;
-  if (String(chatId) !== String(ADMIN_ID)) {
-    return bot.sendMessage(chatId, "❌ Bu funksiya faqat admin uchun mavjud!");
-  }
-
-  const movies = loadData(MOVIES_FILE);
-  const myMovies = Object.entries(movies)
-    .filter(([id, movie]) => String(movie.added_by) === String(ADMIN_ID))
-    .sort((a, b) => new Date(b[1].added_at) - new Date(a[1].added_at));
-
-  if (myMovies.length === 0) {
-    return bot.sendMessage(chatId, "❌ Siz hali hech qanday kino yoki serial qo'shmagansiz!");
-  }
-
-  const groupedBySeries = {};
-  myMovies.forEach(([id, movie]) => {
-    if (movie.isSeries) {
-      if (!groupedBySeries[movie.seriesId]) {
-        groupedBySeries[movie.seriesId] = {
-          title: movie.title.split(' - ')[0],
-          episodes: []
-        };
-      }
-      groupedBySeries[movie.seriesId].episodes.push({ id, movie });
-    } else {
-      groupedBySeries[id] = { title: movie.title, episodes: [{ id, movie }] };
-    }
-  });
-
-  const keyboard = Object.entries(groupedBySeries).map(([seriesId, series]) => {
-    if (series.episodes.length === 1 && !series.episodes[0].movie.isSeries) {
-      const movie = series.episodes[0].movie;
-      return [{
-        text: `${movie.title} (👁 ${movie.views || 0})`,
-        callback_data: `movie_${series.episodes[0].id}`
-      }];
-    } else {
-      return [{
-        text: `${series.title} (${series.episodes.length} qism)`,
-        callback_data: `series_${seriesId}`
-      }];
-    }
-  });
-
-  bot.sendMessage(chatId, `🎬 Sizning kinolar va seriallaringiz (${myMovies.length} ta):`, {
-    reply_markup: {
-      inline_keyboard: keyboard
-    }
-  });
-});
-
 // Callback query
 bot.on('callback_query', async (query) => {
   const chatId = query.message.chat.id;
@@ -347,7 +280,7 @@ bot.on('callback_query', async (query) => {
       const users = loadData(USERS_FILE);
       users[chatId].isSubscribed = true;
       saveData(USERS_FILE, users);
-      bot.deleteMessage(chatId, messageId);
+      await bot.deleteMessage(chatId, messageId);
       showMainMenu(chatId);
     } else {
       bot.answerCallbackQuery(query.id, { 
@@ -431,6 +364,72 @@ bot.on('callback_query', async (query) => {
     bot.answerCallbackQuery(query.id, { text: "❌ O'chirish bekor qilindi!", show_alert: true });
     bot.deleteMessage(query.message.chat.id, query.message.message_id);
   }
+});
+
+// Admin panelni ochish
+bot.onText(/👨‍💻 Admin panel/, (msg) => {
+  const chatId = msg.chat.id;
+  if (String(chatId) === String(ADMIN_ID)) {
+    showAdminMenu(chatId);
+  }
+});
+
+// Asosiy menyuga qaytish
+bot.onText(/🔙 Asosiy menyu/, (msg) => {
+  showMainMenu(msg.chat.id);
+});
+
+// Mening kinolarim
+bot.onText(/\/mymovies|🎬 Mening kinolarim/, (msg) => {
+  const chatId = msg.chat.id;
+  if (String(chatId) !== String(ADMIN_ID)) {
+    return bot.sendMessage(chatId, "❌ Bu funksiya faqat admin uchun mavjud!");
+  }
+
+  const movies = loadData(MOVIES_FILE);
+  const myMovies = Object.entries(movies)
+    .filter(([id, movie]) => String(movie.added_by) === String(ADMIN_ID))
+    .sort((a, b) => new Date(b[1].added_at) - new Date(a[1].added_at));
+
+  if (myMovies.length === 0) {
+    return bot.sendMessage(chatId, "❌ Siz hali hech qanday kino yoki serial qo'shmagansiz!");
+  }
+
+  const groupedBySeries = {};
+  myMovies.forEach(([id, movie]) => {
+    if (movie.isSeries) {
+      if (!groupedBySeries[movie.seriesId]) {
+        groupedBySeries[movie.seriesId] = {
+          title: movie.title.split(' - ')[0],
+          episodes: []
+        };
+      }
+      groupedBySeries[movie.seriesId].episodes.push({ id, movie });
+    } else {
+      groupedBySeries[id] = { title: movie.title, episodes: [{ id, movie }] };
+    }
+  });
+
+  const keyboard = Object.entries(groupedBySeries).map(([seriesId, series]) => {
+    if (series.episodes.length === 1 && !series.episodes[0].movie.isSeries) {
+      const movie = series.episodes[0].movie;
+      return [{
+        text: `${movie.title} (👁 ${movie.views || 0})`,
+        callback_data: `movie_${series.episodes[0].id}`
+      }];
+    } else {
+      return [{
+        text: `${series.title} (${series.episodes.length} qism)`,
+        callback_data: `series_${seriesId}`
+      }];
+    }
+  });
+
+  bot.sendMessage(chatId, `🎬 Sizning kinolar va seriallaringiz (${myMovies.length} ta):`, {
+    reply_markup: {
+      inline_keyboard: keyboard
+    }
+  });
 });
 
 // Kino izlash
@@ -635,9 +634,8 @@ bot.on('video', async (msg) => {
       mime_type: video.mime_type,
       file_size: video.file_size
     };
-   
-
- adminStates[chatId].step = 'waiting_title';
+    
+    adminStates[chatId].step = 'waiting_title';
     
     bot.sendMessage(chatId, "✅ Video qabul qilindi!\n\nEndi kino nomini yuboring:", {
       reply_markup: {
@@ -840,6 +838,7 @@ bot.onText(/\/reklama|📢 Reklama yuborish/, (msg) => {
     }
   });
 });
+
 
 // Reklama yuborish
 bot.on('message', async (msg) => {

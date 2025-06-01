@@ -207,6 +207,7 @@ function showAdminMenu(chatId) {
         ["📺 Qismli seriallar joylash"],
         ["🗑 Kino o'chirish"],
         ["📊 Bot statistikasi"],
+        ["👥 Foydalanuvchilar ro'yxati"],
         ["📢 Reklama yuborish"],
         ["🔙 Asosiy menyu"]
       ],
@@ -229,6 +230,7 @@ if (ADMIN_ID) {
     { command: '/addseries', description: 'Qismli serial qo\'shish' },
     { command: '/deletemovie', description: 'Kino o\'chirish' },
     { command: '/stats', description: 'Statistikani ko\'rish' },
+    { command: '/users', description: 'Foydalanuvchilar ro\'yxati' },
     { command: '/reklama', description: 'Reklama yuborish' },
     { command: '/mymovies', description: 'Mening kinolarim/seriallarimni ko\'rish' }
   ], { scope: { type: 'chat', chat_id: ADMIN_ID } });
@@ -363,6 +365,52 @@ bot.on('callback_query', async (query) => {
   if (query.data === 'cancel_delete') {
     bot.answerCallbackQuery(query.id, { text: "❌ O'chirish bekor qilindi!", show_alert: true });
     bot.deleteMessage(query.message.chat.id, query.message.message_id);
+  }
+  
+  // Foydalanuvchilar ro'yxatini yuklash
+  if (query.data === 'download_users_list') {
+    if (String(chatId) !== String(ADMIN_ID)) {
+      return bot.answerCallbackQuery(query.id, { text: "❌ Sizda bunday huquq yo'q!", show_alert: true });
+    }
+
+    const users = loadData(USERS_FILE);
+    const csvData = Object.entries(users).map(([id, user]) => {
+      return [
+        id,
+        `"${user.firstName}"`,
+        `"${user.lastName || ''}"`,
+        `"${user.username || ''}"`,
+        user.isSubscribed ? 'Ha' : 'Yo\'q',
+        `"${new Date(user.joinedAt).toLocaleString()}"`,
+        `"${new Date(user.lastActive).toLocaleString()}"`,
+        user.searchCount || 0,
+        user.viewedMovies?.length || 0
+      ].join(',');
+    }).join('\n');
+
+    const header = 'ID,Ism,Familiya,Username,Obuna,Qo\'shilgan sana,So\'ngi faollik,Qidiruvlar soni,Ko\'rgan kinolar\n';
+    const csv = header + csvData;
+    
+    const tempFilePath = path.join(__dirname, 'temp_users.csv');
+    fs.writeFileSync(tempFilePath, csv);
+
+    await bot.sendDocument(chatId, tempFilePath, {
+      caption: '📊 Barcha foydalanuvchilar ro\'yxati'
+    });
+
+    fs.unlinkSync(tempFilePath);
+    bot.answerCallbackQuery(query.id);
+  }
+  
+  // Reklamani bekor qilish
+  if (query.data === 'cancel_ad') {
+    if (String(query.from.id) === String(ADMIN_ID)) {
+      bot.answerCallbackQuery(query.id, { text: "Reklama bekor qilindi!" });
+      bot.editMessageText("❌ Reklama bekor qilindi!", {
+        chat_id: query.message.chat.id,
+        message_id: query.message.message_id
+      });
+    }
   }
 });
 
@@ -560,6 +608,59 @@ bot.onText(/📊 Mening statistikam|\/mystats/, (msg) => {
   bot.sendMessage(chatId, stats);
 });
 
+// Foydalanuvchilar ro'yxati
+bot.onText(/\/users|👥 Foydalanuvchilar ro'yxati/, (msg) => {
+  const chatId = msg.chat.id;
+  if (String(chatId) !== String(ADMIN_ID)) {
+    return bot.sendMessage(chatId, "❌ Bu funksiya faqat admin uchun mavjud!");
+  }
+
+  const users = loadData(USERS_FILE);
+  const activeUsers = Object.entries(users).filter(([id, user]) => user.isSubscribed);
+  const inactiveUsers = Object.entries(users).filter(([id, user]) => !user.isSubscribed);
+
+  let message = `📊 Foydalanuvchilar statistikasi:\n\n`;
+  message += `👥 Jami foydalanuvchilar: ${Object.keys(users).length}\n`;
+  message += `✅ Faol obunachilar: ${activeUsers.length}\n`;
+  message += `❌ Obuna bo'lmaganlar: ${inactiveUsers.length}\n\n`;
+
+  // Eng faol 5 ta foydalanuvchi
+  const topActiveUsers = [...activeUsers]
+    .sort((a, b) => new Date(b[1].lastActive) - new Date(a[1].lastActive))
+    .slice(0, 5);
+
+  message += `🏆 Eng faol foydalanuvchilar:\n`;
+  topActiveUsers.forEach(([id, user], index) => {
+    const lastActive = new Date(user.lastActive).toLocaleString();
+    message += `${index + 1}. ${user.firstName} (@${user.username || 'nouser'}) - ${lastActive}\n`;
+  });
+
+  // Yangi 5 ta foydalanuvchi
+  const newUsers = [...Object.entries(users)]
+    .sort((a, b) => new Date(b[1].joinedAt) - new Date(a[1].joinedAt))
+    .slice(0, 5);
+
+  message += `\n🆕 Yangi foydalanuvchilar:\n`;
+  newUsers.forEach(([id, user], index) => {
+    const joinedAt = new Date(user.joinedAt).toLocaleDateString();
+    message += `${index + 1}. ${user.firstName} (@${user.username || 'nouser'}) - ${joinedAt}\n`;
+  });
+
+  // Butun ro'yxatni yuklash uchun tugma
+  const keyboard = {
+    reply_markup: {
+      inline_keyboard: [
+        [{
+          text: "📜 Barcha foydalanuvchilar ro'yxatini yuklash",
+          callback_data: 'download_users_list'
+        }]
+      ]
+    }
+  };
+
+  bot.sendMessage(chatId, message, keyboard);
+});
+
 // Admin komandalari
 const adminStates = {};
 
@@ -743,7 +844,7 @@ bot.on('message', async (msg) => {
         message += `${index + 1}-qism: ID ${id}\n`;
       });
       
-      bot.sendMessage(chatId, message);
+      bot.sendMessage(chatIdmessage);
       delete adminStates[chatId];
     } else if (text.toLowerCase() === 'ha') {
       adminStates[chatId].step = 'waiting_episode_video';

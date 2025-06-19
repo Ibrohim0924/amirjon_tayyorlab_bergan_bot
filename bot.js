@@ -1056,6 +1056,128 @@ bot.on('message', async (msg) => {
   });
 });
 
+// Fayl boshiga quyidagi importni qo'shing
+const YoutubeSearch = require('youtube-search');
+
+// YouTube API kaliti (uni .env fayliga qo'shing)
+const YOUTUBE_API_KEY = process.env.YOUTUBE_API_KEY;
+
+// Asosiy menyuga YouTube qidiruv tugmasini qo'shing
+function showMainMenu(chatId) {
+  const isAdmin = String(chatId) === String(ADMIN_ID);
+  
+  const keyboard = [
+    ["🎥 Kino izlash"],
+    ["📺 YouTube'dan qidirish"],  // <-- Yangi tugma
+    ["ℹ️ Yordam"],
+    ["📊 Mening statistikam"]
+  ];
+  
+  if (isAdmin) {
+    keyboard.push(["👨‍💻 Admin panel"]);
+    keyboard.push(["🎬 Mening kinolarim"]);
+  }
+  
+  const options = {
+    reply_markup: {
+      keyboard: keyboard,
+      resize_keyboard: true
+    }
+  };
+  
+  bot.sendMessage(chatId, "🎬 Asosiy menyu. Quyidagi tugmalardan birini tanlang:", options);
+}
+
+// YouTube qidiruv funksiyasi
+async function searchYouTube(query) {
+  const opts = {
+    maxResults: 5,
+    key: YOUTUBE_API_KEY,
+    type: 'video'
+  };
+  
+  try {
+    const results = await YoutubeSearch(query, opts);
+    return results.results.filter(video => video.kind === 'youtube#video');
+  } catch (err) {
+    console.error('YouTube qidiruv xatosi:', err);
+    return [];
+  }
+}
+
+// YouTube qidiruv tugmasi uchun handler
+bot.onText(/📺 YouTube'dan qidirish|\/youtube/, async (msg) => {
+  const chatId = msg.chat.id;
+  const users = loadData(USERS_FILE);
+  
+  if (!users[chatId]?.isSubscribed) {
+    return bot.sendMessage(chatId, "❌ Botdan foydalanish uchun kanalga obuna bo'lishingiz kerak!");
+  }
+  
+  bot.sendMessage(chatId, "🔍 YouTube'dan qidirmoqchi bo'lgan kino yoki serial nomini kiriting:", {
+    reply_markup: {
+      force_reply: true
+    }
+  });
+});
+
+// YouTube qidiruv natijalarini qaytarish
+bot.on('message', async (msg) => {
+  const chatId = msg.chat.id;
+  const text = msg.text;
+  
+  // YouTube qidiruv so'rovi uchun
+  if (msg.reply_to_message && msg.reply_to_message.text.includes("YouTube'dan qidirmoqchi bo'lgan kino")) {
+    const users = loadData(USERS_FILE);
+    if (!users[chatId]?.isSubscribed) return;
+    
+    const searchTerm = text.trim();
+    if (!searchTerm || searchTerm.length < 3) {
+      return bot.sendMessage(chatId, "❌ Qidiruv uchun kamida 3 ta belgi kiriting!");
+    }
+    
+    const searchingMsg = await bot.sendMessage(chatId, `🔍 YouTube'dan "${searchTerm}" uchun qidirilmoqda...`);
+    
+    try {
+      const videos = await searchYouTube(searchTerm);
+      
+      if (videos.length === 0) {
+        await bot.editMessageText(`❌ YouTube'da "${searchTerm}" uchun hech narsa topilmadi. Boshqa nom bilan qayta urinib ko'ring.`, {
+          chat_id: chatId,
+          message_id: searchingMsg.message_id
+        });
+        return;
+      }
+      
+      const keyboard = videos.map(video => {
+        return [{
+          text: `${video.title} (${video.duration || 'Noma\'lum vaqt'})`,
+          url: `https://youtu.be/${video.id}`
+        }];
+      });
+      
+      await bot.editMessageText(`🔍 YouTube'da "${searchTerm}" uchun topilgan videolar (${videos.length} ta):`, {
+        chat_id: chatId,
+        message_id: searchingMsg.message_id,
+        reply_markup: {
+          inline_keyboard: keyboard
+        }
+      });
+      
+      // Foydalanuvchi statistikasini yangilash
+      users[chatId].searchCount = (users[chatId].searchCount || 0) + 1;
+      saveData(USERS_FILE, users);
+      
+    } catch (err) {
+      console.error('YouTube qidiruv xatosi:', err);
+      await bot.editMessageText(`❌ YouTube qidiruvida xatolik yuz berdi. Iltimos, keyinroq qayta urinib ko'ring.`, {
+        chat_id: chatId,
+        message_id: searchingMsg.message_id
+      });
+    }
+  }
+});
+
 // Yordam
 bot.onText(/\/help|ℹ️ Yordam/, (msg) => {
   const chatId = msg.chat.id;
@@ -1068,6 +1190,11 @@ Bu bot orqali siz turli kinolar va seriallarni nomi yoki ID si bo'yicha qidirib 
 1. "🎥 Kino izlash" tugmasini bosing
 2. Kino yoki serial nomini yoki ID sini kiriting (to'liq yoki qismini)
 3. Serial ID si kiritilsa, barcha qismlar ro'yxati chiqadi
+
+📺 <b>YouTube'dan qidirish</b>:
+1. "📺 YouTube'dan qidirish" tugmasini bosing
+2. Qidirmoqchi bo'lgan kino/serial nomini kiriting
+3. Bot sizga YouTube'dan topilgan videolarni chiqarib beradi
 
 📢 <b>Eslatma</b>: Botdan foydalanish uchun kanalimizga obuna bo'lishingiz kerak.
 

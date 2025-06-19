@@ -140,10 +140,10 @@
     "side-channel-weakmap": "^1.0.2",
     "sshpk": "^1.18.0",
     "stealthy-require": "^1.1.1",
+    "string_decoder": "^1.1.1",
     "string.prototype.trim": "^1.2.10",
     "string.prototype.trimend": "^1.0.9",
     "string.prototype.trimstart": "^1.0.8",
-    "string_decoder": "^1.1.1",
     "tldts": "^6.1.86",
     "tldts-core": "^6.1.86",
     "tough-cookie": "^5.1.2",
@@ -164,9 +164,9 @@
     "which-builtin-type": "^1.2.1",
     "which-collection": "^1.0.2",
     "which-typed-array": "^1.1.19",
-    "wrappy": "^1.0.2"
+    "wrappy": "^1.0.2",
+    "youtube-search": "^1.1.6"
   },
-  "devDependencies": {},
   "scripts": {
     "dev": "node bot.js",
     "test": "echo \"Error: no test specified\" && exit 1"
